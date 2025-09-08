@@ -6,13 +6,14 @@ package main
 
 import (
 	"flag"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/auth"
-	"github.com/wind-c/comqtt/v2/mqtt/listeners"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/auth"
+	"github.com/johnlaird-caff/comqtt/mqtt/listeners"
 )
 
 func main() {

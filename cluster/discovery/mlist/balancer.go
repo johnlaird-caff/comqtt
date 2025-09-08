@@ -5,8 +5,9 @@
 package mlist
 
 import (
-	"github.com/hashicorp/memberlist"
 	"sync"
+
+	"github.com/hashicorp/memberlist"
 )
 
 type RoundRobinBalancer struct {

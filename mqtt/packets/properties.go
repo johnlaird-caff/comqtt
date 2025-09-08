@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/wind-c/comqtt/v2/mqtt/mempool"
+	"github.com/johnlaird-caff/comqtt/mqtt/mempool"
 )
 
 const (

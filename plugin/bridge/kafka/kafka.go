@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/plugin"
 	"github.com/segmentio/kafka-go"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/plugin"
 )
 
 const defaultAddr = "localhost:9092"

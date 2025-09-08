@@ -9,9 +9,9 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 )
 
 // Options contains configuration settings for the debug output.

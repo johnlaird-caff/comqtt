@@ -14,10 +14,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/wind-c/comqtt/v2/cluster/log"
-	"github.com/wind-c/comqtt/v2/cluster/message"
-	"github.com/wind-c/comqtt/v2/cluster/utils"
-	"github.com/wind-c/comqtt/v2/config"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
+	"github.com/johnlaird-caff/comqtt/cluster/message"
+	"github.com/johnlaird-caff/comqtt/cluster/utils"
+	"github.com/johnlaird-caff/comqtt/config"
 
 	"github.com/hashicorp/raft"
 	raftdb "github.com/hashicorp/raft-boltdb/v2"

@@ -11,10 +11,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/auth"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage/redis"
-	"github.com/wind-c/comqtt/v2/mqtt/listeners"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/auth"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage/redis"
+	"github.com/johnlaird-caff/comqtt/mqtt/listeners"
 
 	rv8 "github.com/redis/go-redis/v9"
 )

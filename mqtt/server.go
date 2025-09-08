@@ -19,10 +19,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage"
-	"github.com/wind-c/comqtt/v2/mqtt/listeners"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/mqtt/system"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage"
+	"github.com/johnlaird-caff/comqtt/mqtt/listeners"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt/system"
 
 	"log/slog"
 )

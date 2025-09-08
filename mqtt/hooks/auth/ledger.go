@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 	"gopkg.in/yaml.v3"
 )
 

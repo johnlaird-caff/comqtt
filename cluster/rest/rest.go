@@ -3,12 +3,13 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
-	cs "github.com/wind-c/comqtt/v2/cluster"
-	"github.com/wind-c/comqtt/v2/cluster/discovery"
-	rt "github.com/wind-c/comqtt/v2/mqtt/rest"
 	"net/http"
 	"net/netip"
 	"strings"
+
+	cs "github.com/johnlaird-caff/comqtt/cluster"
+	"github.com/johnlaird-caff/comqtt/cluster/discovery"
+	rt "github.com/johnlaird-caff/comqtt/mqtt/rest"
 )
 
 type rest struct {

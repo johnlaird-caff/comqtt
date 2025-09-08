@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"go.uber.org/goleak"
 	"net"
 	"os"
 	"sync"
 	"testing"
 	"time"
+
+	"go.uber.org/goleak"
 )
 
 func TestMain(m *testing.M) {

@@ -1,9 +1,9 @@
 package auth
 
 import (
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/auth"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/auth"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 )
 
 type HashType int

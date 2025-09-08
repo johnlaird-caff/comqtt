@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt/system"
 	"github.com/stretchr/testify/require"
 	"github.com/timshannon/badgerhold"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/mqtt/system"
 )
 
 var (

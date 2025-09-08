@@ -10,10 +10,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/mqtt/system"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt/system"
 
 	redis "github.com/redis/go-redis/v9"
 )

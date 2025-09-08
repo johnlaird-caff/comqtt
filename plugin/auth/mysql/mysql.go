@@ -6,11 +6,11 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/auth"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/plugin"
-	pa "github.com/wind-c/comqtt/v2/plugin/auth"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/auth"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/plugin"
+	pa "github.com/johnlaird-caff/comqtt/plugin/auth"
 )
 
 type Options struct {

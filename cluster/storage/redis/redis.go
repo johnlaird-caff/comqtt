@@ -10,12 +10,12 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/johnlaird-caff/comqtt/cluster/utils"
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/hooks/storage"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt/system"
 	redis "github.com/redis/go-redis/v9"
-	"github.com/wind-c/comqtt/v2/cluster/utils"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/hooks/storage"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/mqtt/system"
 )
 
 // defaultAddr is the default address to the redis service.

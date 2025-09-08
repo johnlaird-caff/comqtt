@@ -7,13 +7,14 @@ package hashicorp
 import (
 	"bytes"
 	"encoding/gob"
-	"github.com/hashicorp/raft"
-	"github.com/wind-c/comqtt/v2/cluster/log"
-	"github.com/wind-c/comqtt/v2/cluster/message"
-	base "github.com/wind-c/comqtt/v2/cluster/raft"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
 	"io"
 	"strings"
+
+	"github.com/hashicorp/raft"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
+	"github.com/johnlaird-caff/comqtt/cluster/message"
+	base "github.com/johnlaird-caff/comqtt/cluster/raft"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 )
 
 type Fsm struct {

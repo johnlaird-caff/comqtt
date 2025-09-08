@@ -5,9 +5,10 @@
 package raft
 
 import (
-	"github.com/wind-c/comqtt/v2/cluster/message"
-	"github.com/wind-c/comqtt/v2/cluster/utils"
 	"sync"
+
+	"github.com/johnlaird-caff/comqtt/cluster/message"
+	"github.com/johnlaird-caff/comqtt/cluster/utils"
 )
 
 type IPeer interface {

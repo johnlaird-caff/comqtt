@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+	"github.com/johnlaird-caff/comqtt/cluster/message"
+	"github.com/johnlaird-caff/comqtt/config"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 	"github.com/stretchr/testify/require"
-	"github.com/wind-c/comqtt/v2/cluster/message"
-	"github.com/wind-c/comqtt/v2/config"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
 )
 
 func createTestPeer(t *testing.T) *Peer {

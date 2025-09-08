@@ -1,4 +1,4 @@
-module github.com/wind-c/comqtt/v2
+module github.com/johnlaird-caff/comqtt
 
 go 1.24
 

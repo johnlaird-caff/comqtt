@@ -6,8 +6,8 @@ package mlist
 
 import (
 	"github.com/hashicorp/memberlist"
-	"github.com/wind-c/comqtt/v2/cluster/discovery"
-	"github.com/wind-c/comqtt/v2/cluster/log"
+	"github.com/johnlaird-caff/comqtt/cluster/discovery"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
 )
 
 //type Event struct {

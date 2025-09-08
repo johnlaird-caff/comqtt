@@ -2,10 +2,11 @@ package rest
 
 import (
 	"encoding/json"
-	"github.com/wind-c/comqtt/v2/mqtt"
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
 	"net/http"
 	"slices"
+
+	"github.com/johnlaird-caff/comqtt/mqtt"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
 )
 
 const (

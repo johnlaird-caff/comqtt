@@ -5,13 +5,14 @@
 package mlist
 
 import (
-	"github.com/hashicorp/logutils"
-	"github.com/hashicorp/memberlist"
 	"io"
 	"net"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/logutils"
+	"github.com/hashicorp/memberlist"
 )
 
 const (

@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/hashicorp/memberlist"
-	mb "github.com/wind-c/comqtt/v2/cluster/discovery"
-	"github.com/wind-c/comqtt/v2/cluster/log"
-	"github.com/wind-c/comqtt/v2/config"
-	"github.com/wind-c/comqtt/v2/mqtt"
+	mb "github.com/johnlaird-caff/comqtt/cluster/discovery"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
+	"github.com/johnlaird-caff/comqtt/config"
+	"github.com/johnlaird-caff/comqtt/mqtt"
 )
 
 type Membership struct {

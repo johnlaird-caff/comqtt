@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wind-c/comqtt/v2/cluster/log"
-	"github.com/wind-c/comqtt/v2/cluster/message"
-	"github.com/wind-c/comqtt/v2/config"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
+	"github.com/johnlaird-caff/comqtt/cluster/message"
+	"github.com/johnlaird-caff/comqtt/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 

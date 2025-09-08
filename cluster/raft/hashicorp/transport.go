@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
-	"github.com/wind-c/comqtt/v2/cluster/log"
+	"github.com/johnlaird-caff/comqtt/cluster/log"
 )
 
 func newRaftTrans(ln net.Listener) *raft.NetworkTransport {

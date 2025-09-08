@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/wind-c/comqtt/v2/mqtt/packets"
-	"github.com/wind-c/comqtt/v2/mqtt/system"
+	"github.com/johnlaird-caff/comqtt/mqtt/packets"
+	"github.com/johnlaird-caff/comqtt/mqtt/system"
 
 	"github.com/stretchr/testify/require"
 )
