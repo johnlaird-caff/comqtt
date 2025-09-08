@@ -28,8 +28,8 @@ import (
 )
 
 const (
-	Version                       = "2.4.0" // the current server version.
-	defaultSysTopicInterval int64 = 1       // the interval between $SYS topic publishes
+	Version                       = "2.6.1-autosol" // the current server version.
+	defaultSysTopicInterval int64 = 1               // the interval between $SYS topic publishes
 	LocalListener                 = "local"
 	InlineClientId                = "inline"
 )
@@ -275,8 +275,7 @@ func (s *Server) AddListener(l listeners.Listener) error {
 // Serve starts the event loops responsible for establishing client connections
 // on all attached listeners, publishing the system topics, and starting all hooks.
 func (s *Server) Serve() error {
-	//s.Log.Info("version", Version).Msg("comqtt starting")
-	defer s.Log.Info("comqtt server started")
+	defer s.Log.Info("server started", slog.String("version", s.Info.Version))
 
 	if s.hooks.Provides(
 		StoredClients,
