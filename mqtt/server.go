@@ -1470,7 +1470,7 @@ func (s *Server) Close() error {
 	s.hooks.OnStopped()
 	s.hooks.Stop()
 
-	s.Log.Info("comqtt server stopped")
+	s.Log.Info("server stopped")
 	return nil
 }
 
