@@ -131,6 +131,7 @@ type Hooks struct {
 	wg         sync.WaitGroup // a waitgroup for syncing hook shutdown
 	qty        int64          // the number of hooks in use
 	sync.Mutex                // a mutex for locking when adding hooks
+	halting    atomic.Bool    // If true, the hooks are halting and no more work should be done.
 }
 
 // Len returns the number of hooks added.
@@ -187,6 +188,7 @@ func (h *Hooks) GetAll() []Hook {
 // Stop indicates all attached hooks to gracefully end.
 func (h *Hooks) Stop() {
 	go func() {
+		h.halting.Store(true)
 		for _, hook := range h.GetAll() {
 			h.Log.Info("stopping hook", "hook", hook.ID())
 			if err := hook.Stop(); err != nil {
@@ -229,6 +231,10 @@ func (h *Hooks) OnStopped() {
 
 // OnConnect is called when a new client connects, and may return a packets.Code as an error to halt the connection.
 func (h *Hooks) OnConnect(cl *Client, pk packets.Packet) error {
+	if h.halting.Load() {
+		return fmt.Errorf("halt in progress; OnConnect")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnConnect) {
 			err := hook.OnConnect(cl, pk)
@@ -243,6 +249,10 @@ func (h *Hooks) OnConnect(cl *Client, pk packets.Packet) error {
 // OnSessionEstablish is called right after a new client connects and authenticates and right before
 // the session is established and CONNACK is sent.
 func (h *Hooks) OnSessionEstablish(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSessionEstablish) {
 			hook.OnSessionEstablish(cl, pk)
@@ -252,6 +262,10 @@ func (h *Hooks) OnSessionEstablish(cl *Client, pk packets.Packet) {
 
 // OnSessionEstablished is called when a new client establishes a session (after OnConnect).
 func (h *Hooks) OnSessionEstablished(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSessionEstablished) {
 			hook.OnSessionEstablished(cl, pk)
@@ -261,6 +275,10 @@ func (h *Hooks) OnSessionEstablished(cl *Client, pk packets.Packet) {
 
 // OnDisconnect is called when a client is disconnected for any reason.
 func (h *Hooks) OnDisconnect(cl *Client, err error, expire bool) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnDisconnect) {
 			hook.OnDisconnect(cl, err, expire)
@@ -270,6 +288,10 @@ func (h *Hooks) OnDisconnect(cl *Client, err error, expire bool) {
 
 // OnPacketRead is called when a packet is received from a client.
 func (h *Hooks) OnPacketRead(cl *Client, pk packets.Packet) (pkx packets.Packet, err error) {
+	if h.halting.Load() {
+		return
+	}
+
 	pkx = pk
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPacketRead) {
@@ -291,6 +313,10 @@ func (h *Hooks) OnPacketRead(cl *Client, pk packets.Packet) (pkx packets.Packet,
 // OnAuthPacket is called when an auth packet is received. It is intended to allow developers
 // to create their own auth packet handling mechanisms.
 func (h *Hooks) OnAuthPacket(cl *Client, pk packets.Packet) (pkx packets.Packet, err error) {
+	if h.halting.Load() {
+		return
+	}
+
 	pkx = pk
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnAuthPacket) {
@@ -308,6 +334,10 @@ func (h *Hooks) OnAuthPacket(cl *Client, pk packets.Packet) (pkx packets.Packet,
 
 // OnPacketEncode is called immediately before a packet is encoded to be sent to a client.
 func (h *Hooks) OnPacketEncode(cl *Client, pk packets.Packet) packets.Packet {
+	if h.halting.Load() {
+		return pk
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPacketEncode) {
 			pk = hook.OnPacketEncode(cl, pk)
@@ -319,6 +349,10 @@ func (h *Hooks) OnPacketEncode(cl *Client, pk packets.Packet) packets.Packet {
 
 // OnPacketProcessed is called when a packet has been received and successfully handled by the broker.
 func (h *Hooks) OnPacketProcessed(cl *Client, pk packets.Packet, err error) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPacketProcessed) {
 			hook.OnPacketProcessed(cl, pk, err)
@@ -329,6 +363,10 @@ func (h *Hooks) OnPacketProcessed(cl *Client, pk packets.Packet, err error) {
 // OnPacketSent is called when a packet has been sent to a client. It takes a bytes parameter
 // containing the bytes sent.
 func (h *Hooks) OnPacketSent(cl *Client, pk packets.Packet, b []byte) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPacketSent) {
 			hook.OnPacketSent(cl, pk, b)
@@ -341,6 +379,10 @@ func (h *Hooks) OnPacketSent(cl *Client, pk packets.Packet, b []byte) {
 // before the packet is processed. The return values of the hook methods are passed-through
 // in the order the hooks were attached.
 func (h *Hooks) OnSubscribe(cl *Client, pk packets.Packet) packets.Packet {
+	if h.halting.Load() {
+		return pk
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSubscribe) {
 			pk = hook.OnSubscribe(cl, pk)
@@ -351,6 +393,10 @@ func (h *Hooks) OnSubscribe(cl *Client, pk packets.Packet) packets.Packet {
 
 // OnSubscribed is called when a client subscribes to one or more filters.
 func (h *Hooks) OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte, counts []int) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSubscribed) {
 			hook.OnSubscribed(cl, pk, reasonCodes, counts)
@@ -363,6 +409,10 @@ func (h *Hooks) OnSubscribed(cl *Client, pk packets.Packet, reasonCodes []byte, 
 // remove or add clients to a publish to subscribers process, or to select the subscriber for a shared
 // group in a custom manner (such as based on client id, ip, etc).
 func (h *Hooks) OnSelectSubscribers(subs *Subscribers, pk packets.Packet) *Subscribers {
+	if h.halting.Load() {
+		return subs
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSelectSubscribers) {
 			subs = hook.OnSelectSubscribers(subs, pk)
@@ -376,6 +426,10 @@ func (h *Hooks) OnSelectSubscribers(subs *Subscribers, pk packets.Packet) *Subsc
 // before the packet is processed. The return values of the hook methods are passed-through
 // in the order the hooks were attached.
 func (h *Hooks) OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet {
+	if h.halting.Load() {
+		return pk
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnUnsubscribe) {
 			pk = hook.OnUnsubscribe(cl, pk)
@@ -386,6 +440,10 @@ func (h *Hooks) OnUnsubscribe(cl *Client, pk packets.Packet) packets.Packet {
 
 // OnUnsubscribed is called when a client unsubscribes from one or more filters.
 func (h *Hooks) OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte, counts []int) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnUnsubscribed) {
 			hook.OnUnsubscribed(cl, pk, reasonCodes, counts)
@@ -397,6 +455,10 @@ func (h *Hooks) OnUnsubscribed(cl *Client, pk packets.Packet, reasonCodes []byte
 // in that it allows you to modify you to modify the incoming packet before it is processed.
 // The return values of the hook methods are passed-through in the order the hooks were attached.
 func (h *Hooks) OnPublish(cl *Client, pk packets.Packet) (pkx packets.Packet, err error) {
+	if h.halting.Load() {
+		return packets.Packet{}, fmt.Errorf("halt in progress; OnPublish")
+	}
+
 	pkx = pk
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPublish) {
@@ -424,6 +486,10 @@ func (h *Hooks) OnPublish(cl *Client, pk packets.Packet) (pkx packets.Packet, er
 
 // OnPublished is called when a client has published a message to subscribers.
 func (h *Hooks) OnPublished(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPublished) {
 			hook.OnPublished(cl, pk)
@@ -434,6 +500,10 @@ func (h *Hooks) OnPublished(cl *Client, pk packets.Packet) {
 // OnPublishDropped is called when a message to a client was dropped instead of delivered
 // such as when a client is too slow to respond.
 func (h *Hooks) OnPublishDropped(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPublishDropped) {
 			hook.OnPublishDropped(cl, pk)
@@ -443,6 +513,10 @@ func (h *Hooks) OnPublishDropped(cl *Client, pk packets.Packet) {
 
 // OnRetainMessage is called then a published message is retained.
 func (h *Hooks) OnRetainMessage(cl *Client, pk packets.Packet, r int64) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnRetainMessage) {
 			hook.OnRetainMessage(cl, pk, r)
@@ -452,6 +526,10 @@ func (h *Hooks) OnRetainMessage(cl *Client, pk packets.Packet, r int64) {
 
 // OnRetainPublished is called when a retained message is published.
 func (h *Hooks) OnRetainPublished(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnRetainPublished) {
 			hook.OnRetainPublished(cl, pk)
@@ -463,6 +541,10 @@ func (h *Hooks) OnRetainPublished(cl *Client, pk packets.Packet) {
 // In other words, this method is called when a new inflight message is created or resent.
 // It is typically used to store a new inflight message.
 func (h *Hooks) OnQosPublish(cl *Client, pk packets.Packet, sent int64, resends int) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnQosPublish) {
 			hook.OnQosPublish(cl, pk, sent, resends)
@@ -474,6 +556,10 @@ func (h *Hooks) OnQosPublish(cl *Client, pk packets.Packet, sent int64, resends 
 // In other words, when an inflight message is resolved.
 // It is typically used to delete an inflight message from a store.
 func (h *Hooks) OnQosComplete(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnQosComplete) {
 			hook.OnQosComplete(cl, pk)
@@ -485,6 +571,10 @@ func (h *Hooks) OnQosComplete(cl *Client, pk packets.Packet) {
 // an inflight message expires or is abandoned. It is typically used to delete an
 // inflight message from a store.
 func (h *Hooks) OnQosDropped(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnQosDropped) {
 			hook.OnQosDropped(cl, pk)
@@ -495,6 +585,10 @@ func (h *Hooks) OnQosDropped(cl *Client, pk packets.Packet) {
 // OnPacketIDExhausted is called when the client runs out of unused packet ids to
 // assign to a packet.
 func (h *Hooks) OnPacketIDExhausted(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPacketIDExhausted) {
 			hook.OnPacketIDExhausted(cl, pk)
@@ -507,6 +601,10 @@ func (h *Hooks) OnPacketIDExhausted(cl *Client, pk packets.Packet) {
 // published. The return values of the hook methods are passed-through in the order
 // the hooks were attached.
 func (h *Hooks) OnWill(cl *Client, will Will) Will {
+	if h.halting.Load() {
+		return will
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnWill) {
 			mlwt, err := hook.OnWill(cl, will)
@@ -526,6 +624,10 @@ func (h *Hooks) OnWill(cl *Client, will Will) Will {
 
 // OnWillSent is called when an LWT message has been issued from a disconnecting client.
 func (h *Hooks) OnWillSent(cl *Client, pk packets.Packet) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnWillSent) {
 			hook.OnWillSent(cl, pk)
@@ -535,6 +637,10 @@ func (h *Hooks) OnWillSent(cl *Client, pk packets.Packet) {
 
 // OnClientExpired is called when a client session has expired and should be deleted.
 func (h *Hooks) OnClientExpired(cl *Client) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnClientExpired) {
 			hook.OnClientExpired(cl)
@@ -544,6 +650,10 @@ func (h *Hooks) OnClientExpired(cl *Client) {
 
 // OnRetainedExpired is called when a retained message has expired and should be deleted.
 func (h *Hooks) OnRetainedExpired(filter string) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnRetainedExpired) {
 			hook.OnRetainedExpired(filter)
@@ -553,6 +663,10 @@ func (h *Hooks) OnRetainedExpired(filter string) {
 
 // OnPublishedWithSharedFilters is called when a client has published a message to cluster.
 func (h *Hooks) OnPublishedWithSharedFilters(pk packets.Packet, sharedFilters map[string]bool) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnPublishedWithSharedFilters) {
 			hook.OnPublishedWithSharedFilters(pk, sharedFilters)
@@ -642,6 +756,10 @@ func (h *Hooks) StoredRetainedMessages() (v []storage.Message, err error) {
 
 // StoredSysInfo returns a set of system info values.
 func (h *Hooks) StoredSysInfo() (v storage.SystemInfo, err error) {
+	if h.halting.Load() {
+		return storage.SystemInfo{}, fmt.Errorf("halt in progress; StoredSysInfo")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(StoredSysInfo) {
 			v, err := hook.StoredSysInfo()
@@ -661,6 +779,10 @@ func (h *Hooks) StoredSysInfo() (v storage.SystemInfo, err error) {
 
 // StoredClientByCid returns a clients, e.g. from a persistent store.
 func (h *Hooks) StoredClientByCid(cid string) (v storage.Client, err error) {
+	if h.halting.Load() {
+		return storage.Client{}, fmt.Errorf("halt in progress; StoredClientByCid")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(StoredClientByCid) {
 			v, err := hook.StoredClientByCid(cid)
@@ -680,6 +802,10 @@ func (h *Hooks) StoredClientByCid(cid string) (v storage.Client, err error) {
 
 // StoredSubscriptionsByCid returns all subcriptions, e.g. from a persistent store.
 func (h *Hooks) StoredSubscriptionsByCid(cid string) (v []storage.Subscription, err error) {
+	if h.halting.Load() {
+		return []storage.Subscription{}, fmt.Errorf("halt in progress; StoredSubscriptionsByCid")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(StoredSubscriptionsByCid) {
 			v, err := hook.StoredSubscriptionsByCid(cid)
@@ -699,6 +825,10 @@ func (h *Hooks) StoredSubscriptionsByCid(cid string) (v []storage.Subscription, 
 
 // StoredInflightMessagesByCid returns all inflight messages, e.g. from a persistent store.
 func (h *Hooks) StoredInflightMessagesByCid(cid string) (v []storage.Message, err error) {
+	if h.halting.Load() {
+		return []storage.Message{}, fmt.Errorf("halt in progress; StoredInflightMessagesByCid")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(StoredInflightMessagesByCid) {
 			v, err := hook.StoredInflightMessagesByCid(cid)
@@ -718,6 +848,10 @@ func (h *Hooks) StoredInflightMessagesByCid(cid string) (v []storage.Message, er
 
 // StoredRetainedMessageByTopic returns a retained message, e.g. from a persistent store.
 func (h *Hooks) StoredRetainedMessageByTopic(topic string) (v storage.Message, err error) {
+	if h.halting.Load() {
+		return storage.Message{}, fmt.Errorf("halt in progress; StoredRetainedMessageByTopic")
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(StoredRetainedMessageByTopic) {
 			v, err := hook.StoredRetainedMessageByTopic(topic)
@@ -740,6 +874,10 @@ func (h *Hooks) StoredRetainedMessageByTopic(topic string) (v storage.Message, e
 // server (see hooks/auth/allow_all or basic). It can be used in custom hooks to
 // check connecting users against an existing user database.
 func (h *Hooks) OnConnectAuthenticate(cl *Client, pk packets.Packet) bool {
+	if h.halting.Load() {
+		return false
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnConnectAuthenticate) {
 			if ok := hook.OnConnectAuthenticate(cl, pk); ok {
@@ -756,6 +894,10 @@ func (h *Hooks) OnConnectAuthenticate(cl *Client, pk packets.Packet) bool {
 // (see hooks/auth/allow_all or basic). It can be used in custom hooks to
 // check publishing and subscribing users against an existing permissions or roles database.
 func (h *Hooks) OnACLCheck(cl *Client, topic string, write bool) bool {
+	if h.halting.Load() {
+		return false
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnACLCheck) {
 			if ok := hook.OnACLCheck(cl, topic, write); ok {
