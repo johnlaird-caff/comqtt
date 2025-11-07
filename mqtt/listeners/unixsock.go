@@ -73,7 +73,7 @@ func (l *UnixSock) Serve(establish EstablishFn) {
 			go func() {
 				err = establish(l.id, conn)
 				if err != nil {
-					l.log.Warn("", "error", err)
+					l.log.Warn("unable to establish connection on listener", "type", "unixsock", "error", err, "remote-address", conn.RemoteAddr().String())
 				}
 			}()
 		}
