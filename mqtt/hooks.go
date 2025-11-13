@@ -204,6 +204,10 @@ func (h *Hooks) Stop() {
 
 // OnSysInfoTick is called when the $SYS topic values are published out.
 func (h *Hooks) OnSysInfoTick(sys *system.Info) {
+	if h.halting.Load() {
+		return
+	}
+
 	for _, hook := range h.GetAll() {
 		if hook.Provides(OnSysInfoTick) {
 			hook.OnSysInfoTick(sys)

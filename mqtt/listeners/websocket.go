@@ -102,7 +102,7 @@ func (l *Websocket) handler(w http.ResponseWriter, r *http.Request) {
 
 	err = l.establish(l.id, &wsConn{Conn: c.UnderlyingConn(), c: c})
 	if err != nil {
-		l.log.Warn("", "error", err)
+		l.log.Warn("unable to establish connection on listener", "type", "websocket", "error", err, "remote-address", c.RemoteAddr().String())
 	}
 }
 
