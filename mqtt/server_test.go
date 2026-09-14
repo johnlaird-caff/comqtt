@@ -1076,6 +1076,78 @@ func TestInheritClientSession(t *testing.T) {
 	require.Equal(t, 0, cl.State.Subscriptions.Len())
 }
 
+// byCidHistoryHook answers StoredSubscriptionsByCid/StoredInflightMessagesByCid
+// with canned data for one client id, standing in for cluster.Hook's real
+// cross-node pull in these tests.
+type byCidHistoryHook struct {
+	HookBase
+	cid  string
+	subs []storage.Subscription
+	msgs []storage.Message
+}
+
+func (h *byCidHistoryHook) Provides(b byte) bool {
+	return b == StoredSubscriptionsByCid || b == StoredInflightMessagesByCid
+}
+
+func (h *byCidHistoryHook) StoredSubscriptionsByCid(cid string) ([]storage.Subscription, error) {
+	if cid != h.cid {
+		return nil, nil
+	}
+	return h.subs, nil
+}
+
+func (h *byCidHistoryHook) StoredInflightMessagesByCid(cid string) ([]storage.Message, error) {
+	if cid != h.cid {
+		return nil, nil
+	}
+	return h.msgs, nil
+}
+
+// Regression test for the ordering bug this fixes: inheritClientSession (and
+// the loadClientHistory call inside it, for Branch B — no live in-memory
+// client, i.e. a cross-node reconnect) runs in processConnect *before*
+// s.Clients.Add(cl). loadInflightForClient/loadSubscriptionsForClient must
+// therefore restore directly onto the cl passed to inheritClientSession, not
+// via a s.Clients.Get(cid) lookup — cl is deliberately left out of s.Clients
+// here to reproduce that exact ordering, which the previous cid-lookup-based
+// implementation silently failed under (the pull would succeed but the
+// restored messages/subscriptions would be discarded, since s.Clients.Get
+// would find nothing).
+func TestInheritClientSessionRestoresFromByCidHistory(t *testing.T) {
+	s := newServer()
+	hook := &byCidHistoryHook{
+		cid: "mochi",
+		subs: []storage.Subscription{
+			{ID: "sub1", Client: "mochi", Filter: "a/b/c", Qos: 1},
+		},
+		msgs: []storage.Message{
+			{Origin: "someone-else", PacketID: 1, Payload: []byte("hello world"), TopicName: "a/b/c"},
+		},
+	}
+	require.NoError(t, s.AddHook(hook, nil))
+
+	cl, _, _ := newTestClient()
+	cl.ID = "mochi"
+	cl.Properties.ProtocolVersion = 4
+
+	_, ok := s.Clients.Get("mochi")
+	require.False(t, ok, "cl must not be in s.Clients yet — matches processConnect's real ordering")
+
+	sessionPresent := s.inheritClientSession(packets.Packet{Connect: packets.ConnectParams{ClientIdentifier: "mochi"}}, cl)
+	require.True(t, sessionPresent)
+	require.Equal(t, InheritWayRemote, cl.InheritWay)
+
+	require.Equal(t, 1, cl.State.Inflight.Len())
+	msg, ok := cl.State.Inflight.Get(1)
+	require.True(t, ok)
+	require.Equal(t, []byte("hello world"), msg.Payload)
+
+	require.Equal(t, 1, cl.State.Subscriptions.Len())
+	_, ok = cl.State.Subscriptions.Get("a/b/c")
+	require.True(t, ok)
+}
+
 func TestServerUnsubscribeClient(t *testing.T) {
 	s := newServer()
 	cl, _, _ := newTestClient()
@@ -3261,16 +3333,18 @@ func TestServerLoadInflightMessages(t *testing.T) {
 	require.True(t, ok)
 }
 
-// Regression test: loadInflightForClient must restore messages onto the client
-// id it was explicitly asked to restore for, not onto whichever client
+// Regression test: loadInflightForClient must restore messages onto the
+// client it was explicitly asked to restore for, not onto whichever client
 // happens to match msg.Origin. Origin records who originally published a
 // message, which is frequently a different client than the one the message is
 // queued for (e.g. clientA publishes to a topic clientB is subscribed to;
 // clientB's queued copy has Origin "clientA"). loadInflight (the generic,
 // bulk, all-clients restore used at startup) is the one that relies on
 // Origin, and is intentionally left alone; loadInflightForClient is the
-// recipient-aware variant used by loadClientHistory, where the cid is already
-// known from the StoredInflightMessagesByCid(cid) query that produced v.
+// recipient-aware variant used by loadClientHistory, which passes the
+// reconnecting *Client directly (see that function's doc comment for why a
+// s.Clients.Get(cid) lookup — the previous shape of this function — doesn't
+// work for its one real caller).
 func TestServerLoadInflightMessagesForClient(t *testing.T) {
 	s := newServer()
 	s.loadClients([]storage.Client{
@@ -3280,6 +3354,9 @@ func TestServerLoadInflightMessagesForClient(t *testing.T) {
 
 	require.Equal(t, 2, s.Clients.Len())
 
+	mochi, ok := s.Clients.Get("mochi")
+	require.True(t, ok)
+
 	// both messages were originally published by "zen", but are queued
 	// (recipient) for "mochi" -- Origin must not be used to resolve the
 	// recipient here.
@@ -3287,13 +3364,11 @@ func TestServerLoadInflightMessagesForClient(t *testing.T) {
 		{Origin: "zen", PacketID: 1, Payload: []byte("hello world"), TopicName: "a/b/c"},
 		{Origin: "zen", PacketID: 2, Payload: []byte("yes"), TopicName: "a/b/c"},
 	}
-	s.loadInflightForClient("mochi", v)
+	s.loadInflightForClient(mochi, v)
 
-	cl, ok := s.Clients.Get("mochi")
-	require.True(t, ok)
-	require.Equal(t, 2, cl.State.Inflight.Len())
+	require.Equal(t, 2, mochi.State.Inflight.Len())
 
-	msg, ok := cl.State.Inflight.Get(2)
+	msg, ok := mochi.State.Inflight.Get(2)
 	require.True(t, ok)
 	require.Equal(t, []byte{'y', 'e', 's'}, msg.Payload)
 
@@ -3301,23 +3376,6 @@ func TestServerLoadInflightMessagesForClient(t *testing.T) {
 	zen, ok := s.Clients.Get("zen")
 	require.True(t, ok)
 	require.Equal(t, 0, zen.State.Inflight.Len())
-}
-
-func TestServerLoadInflightMessagesForClientUnknownCid(t *testing.T) {
-	s := newServer()
-	s.loadClients([]storage.Client{{ID: "mochi"}})
-
-	// restoring for a cid with no matching connected client must be a no-op,
-	// not a panic or a misroute onto some other client.
-	require.NotPanics(t, func() {
-		s.loadInflightForClient("does-not-exist", []storage.Message{
-			{Origin: "mochi", PacketID: 1, Payload: []byte("hello world")},
-		})
-	})
-
-	cl, ok := s.Clients.Get("mochi")
-	require.True(t, ok)
-	require.Equal(t, 0, cl.State.Inflight.Len())
 }
 
 func TestServerLoadRetainedMessages(t *testing.T) {

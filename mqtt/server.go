@@ -567,7 +567,7 @@ func (s *Server) inheritClientSession(pk packets.Packet, cl *Client) bool {
 		return false
 	}
 
-	if s.loadClientHistory(cl.ID) {
+	if s.loadClientHistory(cl) {
 		cl.InheritWay = InheritWayRemote
 		return true
 	}
@@ -636,18 +636,23 @@ func (s *Server) SendConnack(cl *Client, reason packets.Code, present bool, prop
 }
 
 // loadClientHistory loads history info of client
-func (s *Server) loadClientHistory(cid string) bool {
-	ss, err := s.hooks.StoredSubscriptionsByCid(cid)
+// loadClientHistory takes the reconnecting *Client directly (rather than just
+// its id) because it runs from inheritClientSession, which is called before
+// s.Clients.Add(cl) in processConnect — cl is not yet reachable via
+// s.Clients.Get(cl.ID) at this point. loadSubscriptionsForClient/
+// loadInflightForClient below apply straight to cl for the same reason.
+func (s *Server) loadClientHistory(cl *Client) bool {
+	ss, err := s.hooks.StoredSubscriptionsByCid(cl.ID)
 	if err != nil {
 		return false
 	}
-	s.loadSubscriptions(ss)
+	s.loadSubscriptionsForClient(cl, ss)
 
-	fs, err := s.hooks.StoredInflightMessagesByCid(cid)
+	fs, err := s.hooks.StoredInflightMessagesByCid(cl.ID)
 	if err != nil {
 		return false
 	}
-	s.loadInflightForClient(cid, fs)
+	s.loadInflightForClient(cl, fs)
 
 	if len(ss) > 0 || len(fs) > 0 {
 		return true
@@ -1837,19 +1842,44 @@ func (s *Server) loadInflight(v []storage.Message) {
 	}
 }
 
-// loadInflightForClient restores inflight messages queued for a single, known
-// client id. Unlike loadInflight (used for the bulk, all-clients restore at
-// startup), the recipient here is the cid the caller already queried by, not
-// msg.Origin — Origin records who originally published the message, which is
-// often a different client than the one the message is queued for.
-func (s *Server) loadInflightForClient(cid string, v []storage.Message) {
-	client, ok := s.Clients.Get(cid)
-	if !ok {
-		return
-	}
+// loadSubscriptionsForClient restores subscriptions for a single, known
+// client. Unlike loadSubscriptions (used for the bulk, all-clients restore at
+// startup, where every client in v has already been loaded into s.Clients via
+// loadClients), cl is passed directly rather than looked up via
+// s.Clients.Get(sub.Client) — see loadClientHistory's doc comment for why
+// that lookup would fail here.
+func (s *Server) loadSubscriptionsForClient(cl *Client, v []storage.Subscription) {
+	for _, sub := range v {
+		if sub.Client == InlineClientId {
+			continue
+		}
 
+		sb := packets.Subscription{
+			Filter:            sub.Filter,
+			RetainHandling:    sub.RetainHandling,
+			Qos:               sub.Qos,
+			RetainAsPublished: sub.RetainAsPublished,
+			NoLocal:           sub.NoLocal,
+			Identifier:        sub.Identifier,
+		}
+		if isNew, count := s.Topics.Subscribe(cl.ID, sb); isNew {
+			cl.State.Subscriptions.Add(sub.Filter, sb)
+			s.hooks.OnSubscribed(cl, packets.Packet{Filters: []packets.Subscription{sb}}, []byte{sub.Qos}, []int{count})
+		}
+	}
+}
+
+// loadInflightForClient restores inflight messages queued for a single, known
+// client. Unlike loadInflight (used for the bulk, all-clients restore at
+// startup), the recipient here is cl itself — the caller already knows it
+// from the StoredInflightMessagesByCid(cid) query that produced v — not
+// msg.Origin, which records who originally published the message and is
+// often a different client than the one the message is queued for. cl is
+// passed directly rather than looked up via s.Clients.Get(cid); see
+// loadClientHistory's doc comment for why that lookup would fail here.
+func (s *Server) loadInflightForClient(cl *Client, v []storage.Message) {
 	for _, msg := range v {
-		if ok := client.State.Inflight.Set(msg.ToPacket()); ok {
+		if ok := cl.State.Inflight.Set(msg.ToPacket()); ok {
 			atomic.AddInt64(&s.Info.Inflight, 1)
 		}
 	}
