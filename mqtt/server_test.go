@@ -177,6 +177,7 @@ func TestServerNewClient(t *testing.T) {
 	require.Equal(t, "testing", cl.Net.Listener)
 	require.False(t, cl.Net.Inline)
 	require.NotNil(t, cl.State.Inflight.internal)
+	require.NotNil(t, cl.State.InboundInflight.internal)
 	require.NotNil(t, cl.State.Subscriptions)
 	require.NotNil(t, cl.State.TopicAliases)
 	require.Equal(t, defaultKeepalive, cl.State.Keepalive)
@@ -1046,6 +1047,8 @@ func TestInheritClientSession(t *testing.T) {
 	existing.State.Inflight = NewInflights()
 	existing.State.Inflight.Set(packets.Packet{PacketID: 1, Created: n - 1})
 	existing.State.Inflight.Set(packets.Packet{PacketID: 2, Created: n - 2})
+	existing.State.InboundInflight = NewInflights()
+	existing.State.InboundInflight.Set(packets.Packet{PacketID: 3, Created: n - 1})
 
 	s.Clients.Add(existing)
 
@@ -1053,12 +1056,14 @@ func TestInheritClientSession(t *testing.T) {
 	cl.Properties.ProtocolVersion = 5
 
 	require.Equal(t, 0, cl.State.Inflight.Len())
+	require.Equal(t, 0, cl.State.InboundInflight.Len())
 	require.Equal(t, 0, cl.State.Subscriptions.Len())
 
 	// Inherit existing client properties
 	b := s.inheritClientSession(packets.Packet{Connect: packets.ConnectParams{ClientIdentifier: "mochi"}}, cl)
 	require.True(t, b)
 	require.Equal(t, 2, cl.State.Inflight.Len())
+	require.Equal(t, 1, cl.State.InboundInflight.Len())
 	require.Equal(t, 1, cl.State.Subscriptions.Len())
 
 	// On clean, clear existing properties
@@ -1067,7 +1072,80 @@ func TestInheritClientSession(t *testing.T) {
 	b = s.inheritClientSession(packets.Packet{Connect: packets.ConnectParams{ClientIdentifier: "mochi", Clean: true}}, cl)
 	require.False(t, b)
 	require.Equal(t, 0, cl.State.Inflight.Len())
+	require.Equal(t, 0, cl.State.InboundInflight.Len())
 	require.Equal(t, 0, cl.State.Subscriptions.Len())
+}
+
+// byCidHistoryHook answers StoredSubscriptionsByCid/StoredInflightMessagesByCid
+// with canned data for one client id, standing in for cluster.Hook's real
+// cross-node pull in these tests.
+type byCidHistoryHook struct {
+	HookBase
+	cid  string
+	subs []storage.Subscription
+	msgs []storage.Message
+}
+
+func (h *byCidHistoryHook) Provides(b byte) bool {
+	return b == StoredSubscriptionsByCid || b == StoredInflightMessagesByCid
+}
+
+func (h *byCidHistoryHook) StoredSubscriptionsByCid(cid string) ([]storage.Subscription, error) {
+	if cid != h.cid {
+		return nil, nil
+	}
+	return h.subs, nil
+}
+
+func (h *byCidHistoryHook) StoredInflightMessagesByCid(cid string) ([]storage.Message, error) {
+	if cid != h.cid {
+		return nil, nil
+	}
+	return h.msgs, nil
+}
+
+// Regression test for the ordering bug this fixes: inheritClientSession (and
+// the loadClientHistory call inside it, for Branch B — no live in-memory
+// client, i.e. a cross-node reconnect) runs in processConnect *before*
+// s.Clients.Add(cl). loadInflightForClient/loadSubscriptionsForClient must
+// therefore restore directly onto the cl passed to inheritClientSession, not
+// via a s.Clients.Get(cid) lookup — cl is deliberately left out of s.Clients
+// here to reproduce that exact ordering, which the previous cid-lookup-based
+// implementation silently failed under (the pull would succeed but the
+// restored messages/subscriptions would be discarded, since s.Clients.Get
+// would find nothing).
+func TestInheritClientSessionRestoresFromByCidHistory(t *testing.T) {
+	s := newServer()
+	hook := &byCidHistoryHook{
+		cid: "mochi",
+		subs: []storage.Subscription{
+			{ID: "sub1", Client: "mochi", Filter: "a/b/c", Qos: 1},
+		},
+		msgs: []storage.Message{
+			{Origin: "someone-else", PacketID: 1, Payload: []byte("hello world"), TopicName: "a/b/c"},
+		},
+	}
+	require.NoError(t, s.AddHook(hook, nil))
+
+	cl, _, _ := newTestClient()
+	cl.ID = "mochi"
+	cl.Properties.ProtocolVersion = 4
+
+	_, ok := s.Clients.Get("mochi")
+	require.False(t, ok, "cl must not be in s.Clients yet — matches processConnect's real ordering")
+
+	sessionPresent := s.inheritClientSession(packets.Packet{Connect: packets.ConnectParams{ClientIdentifier: "mochi"}}, cl)
+	require.True(t, sessionPresent)
+	require.Equal(t, InheritWayRemote, cl.InheritWay)
+
+	require.Equal(t, 1, cl.State.Inflight.Len())
+	msg, ok := cl.State.Inflight.Get(1)
+	require.True(t, ok)
+	require.Equal(t, []byte("hello world"), msg.Payload)
+
+	require.Equal(t, 1, cl.State.Subscriptions.Len())
+	_, ok = cl.State.Subscriptions.Get("a/b/c")
+	require.True(t, ok)
 }
 
 func TestServerUnsubscribeClient(t *testing.T) {
@@ -1599,7 +1677,7 @@ func TestServerProcessPacketPublishQos0(t *testing.T) {
 func TestServerProcessPacketPublishQos1PacketIDInUse(t *testing.T) {
 	s := newServer()
 	cl, r, w := newTestClient()
-	cl.State.Inflight.Set(packets.Packet{PacketID: 7, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: 7, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
 	atomic.StoreInt64(&s.Info.Inflight, 1)
 
 	go func() {
@@ -1618,7 +1696,7 @@ func TestServerProcessPacketPublishQos2PacketIDInUse(t *testing.T) {
 	s := newServer()
 	cl, r, w := newTestClient()
 	cl.Properties.ProtocolVersion = 5
-	cl.State.Inflight.Set(packets.Packet{PacketID: 7, FixedHeader: packets.FixedHeader{Type: packets.Pubrec}})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: 7, FixedHeader: packets.FixedHeader{Type: packets.Pubrec}})
 	atomic.StoreInt64(&s.Info.Inflight, 1)
 
 	go func() {
@@ -2342,7 +2420,7 @@ func TestServerProcessPacketPubrel(t *testing.T) {
 	cl.State.Inflight.sendQuota = 3
 	cl.State.Inflight.receiveQuota = 3
 
-	cl.State.Inflight.Set(packets.Packet{PacketID: pID})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: pID})
 	atomic.AddInt64(&s.Info.Inflight, 1)
 
 	recv := make(chan []byte)
@@ -2362,7 +2440,7 @@ func TestServerProcessPacketPubrel(t *testing.T) {
 	require.Equal(t, packets.TPacketData[packets.Pubcomp].Get(packets.TPubcomp).RawBytes, <-recv)
 
 	require.Equal(t, int64(0), atomic.LoadInt64(&s.Info.Inflight))
-	_, ok := cl.State.Inflight.Get(pID)
+	_, ok := cl.State.InboundInflight.Get(pID)
 	require.False(t, ok)
 }
 
@@ -2395,7 +2473,7 @@ func TestServerProcessPacketPubrelFailure(t *testing.T) {
 	pID := uint16(7)
 	s := newServer()
 	cl, _, _ := newTestClient()
-	cl.State.Inflight.Set(packets.Packet{PacketID: pID})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: pID})
 	cl.Stop(packets.CodeDisconnect)
 	err := s.processPacket(cl, *packets.TPacketData[packets.Pubrel].Get(packets.TPubrel).Packet)
 	require.Error(t, err)
@@ -2406,12 +2484,12 @@ func TestServerProcessPacketPubrelBadReason(t *testing.T) {
 	pID := uint16(7)
 	s := newServer()
 	cl, _, _ := newTestClient()
-	cl.State.Inflight.Set(packets.Packet{PacketID: pID})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: pID})
 	err := s.processPacket(cl, *packets.TPacketData[packets.Pubrel].Get(packets.TPubrelInvalidReason).Packet)
 	require.NoError(t, err)
 	require.Equal(t, int64(-1), atomic.LoadInt64(&s.Info.Inflight))
 	require.Equal(t, int64(1), atomic.LoadInt64(&s.Info.InflightDropped))
-	_, ok := cl.State.Inflight.Get(pID)
+	_, ok := cl.State.InboundInflight.Get(pID)
 	require.False(t, ok)
 }
 
@@ -2500,7 +2578,7 @@ func TestServerProcessInboundQos2Flow(t *testing.T) {
 
 			require.Equal(t, tx.out.RawBytes, <-recv)
 			if i == 0 {
-				_, ok := cl.State.Inflight.Get(pID)
+				_, ok := cl.State.InboundInflight.Get(pID)
 				require.True(t, ok)
 			}
 
@@ -2510,7 +2588,7 @@ func TestServerProcessInboundQos2Flow(t *testing.T) {
 		})
 	}
 
-	_, ok := cl.State.Inflight.Get(pID)
+	_, ok := cl.State.InboundInflight.Get(pID)
 	require.False(t, ok)
 }
 
@@ -2612,7 +2690,7 @@ func TestServerProcessPacketSubscribePacketIDInUse(t *testing.T) {
 	s := newServer()
 	cl, r, w := newTestClient()
 	cl.Properties.ProtocolVersion = 5
-	cl.State.Inflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
 
 	pkx := *packets.TPacketData[packets.Subscribe].Get(packets.TSubscribeMqtt5).Packet
 	pkx.PacketID = 15
@@ -2625,6 +2703,54 @@ func TestServerProcessPacketSubscribePacketIDInUse(t *testing.T) {
 	buf, err := io.ReadAll(r)
 	require.NoError(t, err)
 	require.Equal(t, packets.TPacketData[packets.Suback].Get(packets.TSubackPacketIDInUse).RawBytes, buf)
+}
+
+// Regression test: on a busy reconnect, a resent/queued QoS message's packet ID
+// can collide with a client-assigned SUBSCRIBE packet ID (both commonly start
+// counting from 1). That collision must never hand an MQTT 3.1.1 client the raw
+// MQTT5-only ErrPacketIdentifierInUse (0x91) reason code — such a client has no
+// way to interpret it and disconnects (observed field symptom: mosquitto_sub
+// logging "All subscription requests were denied" right after reconnecting).
+// MQTT3 clients must only ever see reason codes <= CodeGrantedQos2, so the
+// collision should be reported as ErrUnspecifiedError (0x80) instead.
+func TestServerProcessPacketSubscribePacketIDInUseMqtt3(t *testing.T) {
+	s := newServer()
+	cl, r, w := newTestClient() // ProtocolVersion defaults to 4 (MQTT 3.1.1)
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
+
+	pkx := *packets.TPacketData[packets.Subscribe].Get(packets.TSubscribe).Packet // PacketID: 15, single filter
+	go func() {
+		err := s.processPacket(cl, pkx)
+		require.NoError(t, err)
+		_ = w.Close()
+	}()
+
+	buf, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, []byte{packets.ErrUnspecifiedError.Code}, buf[4:], "MQTT3 SUBACK reason code must be clamped, not the raw MQTT5 0x91")
+}
+
+// Regression test: per MQTT-2.2.1, client-assigned packet ids (SUBSCRIBE) and
+// server-assigned packet ids (a resent/queued outbound QOS message) are
+// independent identifier spaces and are allowed to collide numerically. A
+// server-assigned outbound entry at the same numeric id as an incoming
+// SUBSCRIBE must never be mistaken for "packet identifier in use" — the
+// subscribe should succeed outright, not just receive a spec-legal denial.
+func TestServerProcessPacketSubscribeNoFalseCollisionWithOutboundInflight(t *testing.T) {
+	s := newServer()
+	cl, r, w := newTestClient() // ProtocolVersion defaults to 4 (MQTT 3.1.1)
+	cl.State.Inflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
+
+	pkx := *packets.TPacketData[packets.Subscribe].Get(packets.TSubscribe).Packet // PacketID: 15, single filter
+	go func() {
+		err := s.processPacket(cl, pkx)
+		require.NoError(t, err)
+		_ = w.Close()
+	}()
+
+	buf, err := io.ReadAll(r)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0, 15, packets.CodeGrantedQos0.Code}, buf[2:], "subscribe must succeed outright (granted QOS0), not be denied due to the unrelated outbound entry")
 }
 
 func TestServerProcessPacketSubscribeInvalid(t *testing.T) {
@@ -2863,7 +2989,7 @@ func TestServerProcessPacketUnsubscribePackedIDInUse(t *testing.T) {
 	s := newServer()
 	cl, r, w := newTestClient()
 	cl.Properties.ProtocolVersion = 5
-	cl.State.Inflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
+	cl.State.InboundInflight.Set(packets.Packet{PacketID: 15, FixedHeader: packets.FixedHeader{Type: packets.Publish}})
 	go func() {
 		err := s.processPacket(cl, *packets.TPacketData[packets.Unsubscribe].Get(packets.TUnsubscribeMqtt5).Packet)
 		require.NoError(t, err)
@@ -3205,6 +3331,51 @@ func TestServerLoadInflightMessages(t *testing.T) {
 	require.True(t, ok)
 	msg, ok = cl.State.Inflight.Get(4)
 	require.True(t, ok)
+}
+
+// Regression test: loadInflightForClient must restore messages onto the
+// client it was explicitly asked to restore for, not onto whichever client
+// happens to match msg.Origin. Origin records who originally published a
+// message, which is frequently a different client than the one the message is
+// queued for (e.g. clientA publishes to a topic clientB is subscribed to;
+// clientB's queued copy has Origin "clientA"). loadInflight (the generic,
+// bulk, all-clients restore used at startup) is the one that relies on
+// Origin, and is intentionally left alone; loadInflightForClient is the
+// recipient-aware variant used by loadClientHistory, which passes the
+// reconnecting *Client directly (see that function's doc comment for why a
+// s.Clients.Get(cid) lookup — the previous shape of this function — doesn't
+// work for its one real caller).
+func TestServerLoadInflightMessagesForClient(t *testing.T) {
+	s := newServer()
+	s.loadClients([]storage.Client{
+		{ID: "mochi"},
+		{ID: "zen"},
+	})
+
+	require.Equal(t, 2, s.Clients.Len())
+
+	mochi, ok := s.Clients.Get("mochi")
+	require.True(t, ok)
+
+	// both messages were originally published by "zen", but are queued
+	// (recipient) for "mochi" -- Origin must not be used to resolve the
+	// recipient here.
+	v := []storage.Message{
+		{Origin: "zen", PacketID: 1, Payload: []byte("hello world"), TopicName: "a/b/c"},
+		{Origin: "zen", PacketID: 2, Payload: []byte("yes"), TopicName: "a/b/c"},
+	}
+	s.loadInflightForClient(mochi, v)
+
+	require.Equal(t, 2, mochi.State.Inflight.Len())
+
+	msg, ok := mochi.State.Inflight.Get(2)
+	require.True(t, ok)
+	require.Equal(t, []byte{'y', 'e', 's'}, msg.Payload)
+
+	// "zen" (the Origin, not the recipient) must not have received these.
+	zen, ok := s.Clients.Get("zen")
+	require.True(t, ok)
+	require.Equal(t, 0, zen.State.Inflight.Len())
 }
 
 func TestServerLoadRetainedMessages(t *testing.T) {

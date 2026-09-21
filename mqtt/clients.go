@@ -144,10 +144,19 @@ type Will struct {
 }
 
 // ClientState tracks the state of the client.
+//
+// Inflight and InboundInflight are deliberately separate maps: per MQTT-2.2.1,
+// client-assigned packet ids (SUBSCRIBE, UNSUBSCRIBE, client-originated QOS1/2
+// PUBLISH) and server-assigned packet ids (server-originated QOS1/2 PUBLISH) are
+// independent identifier spaces and are allowed to collide numerically. Checking
+// one against the other produces false "packet identifier in use" positives —
+// e.g. a resent QOS message and a freshly reconnected client's SUBSCRIBE both
+// commonly start counting from packet id 1.
 type ClientState struct {
 	TopicAliases    TopicAliases         // a map of topic aliases
 	stopCause       atomic.Value         // reason for stopping
-	Inflight        *Inflight            // a map of in-flight qos messages
+	Inflight        *Inflight            // in-flight qos messages the server sent, keyed by server-assigned packet id
+	InboundInflight *Inflight            // in-flight qos2 receives from the client, keyed by client-assigned packet id
 	Subscriptions   *Subscriptions       // a map of the subscription filters a client maintains
 	disconnected    int64                // the time the client disconnected in unix time, for calculating expiry
 	outbound        chan *packets.Packet // queue for pending outbound packets
@@ -167,13 +176,14 @@ func newClient(c net.Conn, o *ops) *Client {
 	ctx, cancel := context.WithCancel(context.Background())
 	cl := &Client{
 		State: ClientState{
-			Inflight:      NewInflights(),
-			Subscriptions: NewSubscriptions(),
-			TopicAliases:  NewTopicAliases(o.options.Capabilities.TopicAliasMaximum),
-			open:          ctx,
-			cancelOpen:    cancel,
-			Keepalive:     defaultKeepalive,
-			outbound:      make(chan *packets.Packet, o.options.Capabilities.MaximumClientWritesPending),
+			Inflight:        NewInflights(),
+			InboundInflight: NewInflights(),
+			Subscriptions:   NewSubscriptions(),
+			TopicAliases:    NewTopicAliases(o.options.Capabilities.TopicAliasMaximum),
+			open:            ctx,
+			cancelOpen:      cancel,
+			Keepalive:       defaultKeepalive,
+			outbound:        make(chan *packets.Packet, o.options.Capabilities.MaximumClientWritesPending),
 		},
 		Properties: ClientProperties{
 			ProtocolVersion: defaultClientProtocolVersion, // default protocol version
@@ -335,12 +345,28 @@ func (cl *Client) ClearInflights(now, maximumExpiry int64) []uint16 {
 		}
 	}
 
+	for _, tk := range cl.State.InboundInflight.GetAll(false) {
+		if (tk.Expiry > 0 && tk.Expiry < now) || tk.Created+maximumExpiry < now {
+			if ok := cl.State.InboundInflight.Delete(tk.PacketID); ok {
+				cl.ops.hooks.OnQosDropped(cl, tk)
+				atomic.AddInt64(&cl.ops.info.Inflight, -1)
+				atomic.AddInt64(&cl.ops.info.InflightDropped, 1)
+				deleted = append(deleted, tk.PacketID)
+			}
+		}
+	}
+
 	return deleted
 }
 
 func (cl *Client) ClearAllInflightsInMemoryOnly() {
 	for _, tk := range cl.State.Inflight.GetAll(false) {
 		if ok := cl.State.Inflight.Delete(tk.PacketID); ok {
+			atomic.AddInt64(&cl.ops.info.Inflight, -1)
+		}
+	}
+	for _, tk := range cl.State.InboundInflight.GetAll(false) {
+		if ok := cl.State.InboundInflight.Delete(tk.PacketID); ok {
 			atomic.AddInt64(&cl.ops.info.Inflight, -1)
 		}
 	}

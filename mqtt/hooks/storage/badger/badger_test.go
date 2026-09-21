@@ -89,6 +89,9 @@ func TestProvides(t *testing.T) {
 	require.True(t, h.Provides(mqtt.StoredRetainedMessages))
 	require.True(t, h.Provides(mqtt.StoredSubscriptions))
 	require.True(t, h.Provides(mqtt.StoredSysInfo))
+	require.True(t, h.Provides(mqtt.StoredClientByCid))
+	require.True(t, h.Provides(mqtt.StoredSubscriptionsByCid))
+	require.True(t, h.Provides(mqtt.StoredInflightMessagesByCid))
 	require.False(t, h.Provides(mqtt.OnACLCheck))
 	require.False(t, h.Provides(mqtt.OnConnectAuthenticate))
 }
@@ -643,6 +646,180 @@ func TestStoredInflightMessagesNoDB(t *testing.T) {
 	v, err := h.StoredInflightMessages()
 	require.Empty(t, v)
 	require.NoError(t, err)
+}
+
+func TestStoredClientByCid(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	h.OnSessionEstablished(client, packets.Packet{})
+
+	other := &mqtt.Client{ID: "other-client"}
+	h.OnSessionEstablished(other, packets.Packet{})
+
+	r, err := h.StoredClientByCid(client.ID)
+	require.NoError(t, err)
+	require.Equal(t, client.ID, r.ID)
+	require.Equal(t, client.Net.Remote, r.Remote)
+}
+
+func TestStoredClientByCidNotFound(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	r, err := h.StoredClientByCid("does-not-exist")
+	require.NoError(t, err)
+	require.Empty(t, r.ID)
+}
+
+func TestStoredClientByCidNoDB(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	v, err := h.StoredClientByCid(client.ID)
+	require.Empty(t, v)
+	require.NoError(t, err)
+}
+
+func TestStoredSubscriptionsByCid(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	other := &mqtt.Client{ID: "other-client"}
+	otherFilter := packets.Packet{Filters: packets.Subscriptions{{Filter: "x/y/z"}}}
+
+	// two filters for the client under test, one for a different client, to
+	// confirm the by-cid query only returns the requested client's own rows
+	h.OnSubscribed(client, pkf, []byte{0}, []int{0})
+	h.OnSubscribed(client, otherFilter, []byte{1}, []int{0})
+	h.OnSubscribed(other, pkf, []byte{0}, []int{0})
+
+	r, err := h.StoredSubscriptionsByCid(client.ID)
+	require.NoError(t, err)
+	require.Len(t, r, 2)
+	for _, sub := range r {
+		require.Equal(t, client.ID, sub.Client)
+	}
+}
+
+func TestStoredSubscriptionsByCidNoMatch(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	h.OnSubscribed(client, pkf, []byte{0}, []int{0})
+
+	r, err := h.StoredSubscriptionsByCid("does-not-exist")
+	require.NoError(t, err)
+	require.Empty(t, r)
+}
+
+func TestStoredSubscriptionsByCidNoDB(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	v, err := h.StoredSubscriptionsByCid(client.ID)
+	require.Empty(t, v)
+	require.NoError(t, err)
+}
+
+func TestStoredInflightMessagesByCid(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	other := &mqtt.Client{ID: "other-client"}
+
+	pk1 := packets.Packet{PacketID: 1, TopicName: "a/b/c", Payload: []byte("one")}
+	pk2 := packets.Packet{PacketID: 2, TopicName: "a/b/c", Payload: []byte("two")}
+	otherPk := packets.Packet{PacketID: 1, TopicName: "a/b/c", Payload: []byte("other")}
+
+	// two messages queued for the client under test, one for a different
+	// client with a colliding packet id, to confirm the by-cid query is
+	// scoped correctly rather than matching on packet id alone
+	h.OnQosPublish(client, pk1, time.Now().Unix(), 0)
+	h.OnQosPublish(client, pk2, time.Now().Unix(), 0)
+	h.OnQosPublish(other, otherPk, time.Now().Unix(), 0)
+
+	r, err := h.StoredInflightMessagesByCid(client.ID)
+	require.NoError(t, err)
+	require.Len(t, r, 2)
+	payloads := []string{string(r[0].Payload), string(r[1].Payload)}
+	require.ElementsMatch(t, []string{"one", "two"}, payloads)
+}
+
+func TestStoredInflightMessagesByCidNoMatch(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(nil)
+	require.NoError(t, err)
+	defer teardown(t, h.config.Path, h)
+
+	h.OnQosPublish(client, packets.Packet{PacketID: 1}, time.Now().Unix(), 0)
+
+	r, err := h.StoredInflightMessagesByCid("does-not-exist")
+	require.NoError(t, err)
+	require.Empty(t, r)
+}
+
+func TestStoredInflightMessagesByCidNoDB(t *testing.T) {
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	v, err := h.StoredInflightMessagesByCid(client.ID)
+	require.Empty(t, v)
+	require.NoError(t, err)
+}
+
+// Regression test: by-cid history must survive an actual process restart, not
+// just a query against a still-open store — i.e. this is the storage layer's
+// half of the standalone (same-node) reconnect-after-restart scenario the
+// broker's inflight/reconnect QA plan (P0a) targets. Simulates a restart by
+// closing the store and opening a brand new Hook against the same on-disk
+// path, rather than reusing the same *Hook/*badgerhold.Store handle.
+func TestStoredByCidSurvivesRestart(t *testing.T) {
+	dir := t.TempDir()
+
+	h := new(Hook)
+	h.SetOpts(logger, nil)
+	err := h.Init(&Options{Path: dir})
+	require.NoError(t, err)
+
+	h.OnSessionEstablished(client, packets.Packet{})
+	h.OnSubscribed(client, pkf, []byte{0}, []int{0})
+	h.OnQosPublish(client, packets.Packet{PacketID: 1, TopicName: "a/b/c", Payload: []byte("queued")}, time.Now().Unix(), 0)
+
+	require.NoError(t, h.Stop())
+
+	restarted := new(Hook)
+	restarted.SetOpts(logger, nil)
+	err = restarted.Init(&Options{Path: dir})
+	require.NoError(t, err)
+	defer teardown(t, dir, restarted)
+
+	cl, err := restarted.StoredClientByCid(client.ID)
+	require.NoError(t, err)
+	require.Equal(t, client.ID, cl.ID)
+
+	subs, err := restarted.StoredSubscriptionsByCid(client.ID)
+	require.NoError(t, err)
+	require.Len(t, subs, 1)
+	require.Equal(t, pkf.Filters[0].Filter, subs[0].Filter)
+
+	msgs, err := restarted.StoredInflightMessagesByCid(client.ID)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.Equal(t, []byte("queued"), msgs[0].Payload)
 }
 
 func TestStoredSysInfo(t *testing.T) {

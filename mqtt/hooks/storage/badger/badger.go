@@ -38,9 +38,16 @@ func retainedKey(topic string) string {
 	return storage.RetainedKey + "_" + topic
 }
 
+// inflightKeyPrefix returns the primary-key prefix shared by every inflight
+// message stored for a given client id, so a by-cid lookup can be expressed as
+// a prefix match on storage.Message.ID without a dedicated recipient field.
+func inflightKeyPrefix(cid string) string {
+	return storage.InflightKey + "_" + cid + ":"
+}
+
 // inflightKey returns a primary key for an inflight message.
 func inflightKey(cl *mqtt.Client, pk packets.Packet) string {
-	return storage.InflightKey + "_" + cl.ID + ":" + pk.FormatID()
+	return inflightKeyPrefix(cl.ID) + pk.FormatID()
 }
 
 // sysInfoKey returns a primary key for system info.
@@ -86,6 +93,9 @@ func (h *Hook) Provides(b byte) bool {
 		mqtt.StoredRetainedMessages,
 		mqtt.StoredSubscriptions,
 		mqtt.StoredSysInfo,
+		mqtt.StoredClientByCid,
+		mqtt.StoredSubscriptionsByCid,
+		mqtt.StoredInflightMessagesByCid,
 	}, []byte{b})
 }
 
@@ -436,6 +446,51 @@ func (h *Hook) StoredInflightMessages() (v []storage.Message, err error) {
 	}
 
 	err = h.db.Find(&v, badgerhold.Where("T").Eq(storage.InflightKey))
+	if err != nil && !errors.Is(err, badgerhold.ErrNotFound) {
+		return
+	}
+
+	return v, nil
+}
+
+// StoredClientByCid returns a single stored client from the store, if any.
+func (h *Hook) StoredClientByCid(cid string) (v storage.Client, err error) {
+	if h.db == nil {
+		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
+		return
+	}
+
+	err = h.db.Get(cid, &v)
+	if err != nil && !errors.Is(err, badgerhold.ErrNotFound) {
+		return
+	}
+
+	return v, nil
+}
+
+// StoredSubscriptionsByCid returns all stored subscriptions for a single client id.
+func (h *Hook) StoredSubscriptionsByCid(cid string) (v []storage.Subscription, err error) {
+	if h.db == nil {
+		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
+		return
+	}
+
+	err = h.db.Find(&v, badgerhold.Where("T").Eq(storage.SubscriptionKey).And("Client").Eq(cid))
+	if err != nil && !errors.Is(err, badgerhold.ErrNotFound) {
+		return
+	}
+
+	return v, nil
+}
+
+// StoredInflightMessagesByCid returns all stored inflight messages queued for a single client id.
+func (h *Hook) StoredInflightMessagesByCid(cid string) (v []storage.Message, err error) {
+	if h.db == nil {
+		h.Log.Error("", "error", storage.ErrDBFileNotOpen)
+		return
+	}
+
+	err = h.db.Find(&v, badgerhold.Where("T").Eq(storage.InflightKey).And("ID").HasPrefix(inflightKeyPrefix(cid)))
 	if err != nil && !errors.Is(err, badgerhold.ErrNotFound) {
 		return
 	}

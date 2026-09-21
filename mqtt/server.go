@@ -533,6 +533,9 @@ func (s *Server) inheritClientSession(pk packets.Packet, cl *Client) bool {
 				cl.State.Inflight.ResetSendQuota(int32(cl.Properties.Props.ReceiveMaximum))            // client receive max
 			}
 		}
+		if existing.State.InboundInflight.Len() > 0 {
+			cl.State.InboundInflight = existing.State.InboundInflight.Clone() // [MQTT-3.1.2-5]
+		}
 
 		for _, sub := range existing.State.Subscriptions.GetAll() {
 			isNew, count := s.Topics.Subscribe(cl.ID, sub) // [MQTT-3.8.4-3]
@@ -564,7 +567,7 @@ func (s *Server) inheritClientSession(pk packets.Packet, cl *Client) bool {
 		return false
 	}
 
-	if s.loadClientHistory(cl.ID) {
+	if s.loadClientHistory(cl) {
 		cl.InheritWay = InheritWayRemote
 		return true
 	}
@@ -633,18 +636,23 @@ func (s *Server) SendConnack(cl *Client, reason packets.Code, present bool, prop
 }
 
 // loadClientHistory loads history info of client
-func (s *Server) loadClientHistory(cid string) bool {
-	ss, err := s.hooks.StoredSubscriptionsByCid(cid)
+// loadClientHistory takes the reconnecting *Client directly (rather than just
+// its id) because it runs from inheritClientSession, which is called before
+// s.Clients.Add(cl) in processConnect — cl is not yet reachable via
+// s.Clients.Get(cl.ID) at this point. loadSubscriptionsForClient/
+// loadInflightForClient below apply straight to cl for the same reason.
+func (s *Server) loadClientHistory(cl *Client) bool {
+	ss, err := s.hooks.StoredSubscriptionsByCid(cl.ID)
 	if err != nil {
 		return false
 	}
-	s.loadSubscriptions(ss)
+	s.loadSubscriptionsForClient(cl, ss)
 
-	fs, err := s.hooks.StoredInflightMessagesByCid(cid)
+	fs, err := s.hooks.StoredInflightMessagesByCid(cl.ID)
 	if err != nil {
 		return false
 	}
-	s.loadInflight(fs)
+	s.loadInflightForClient(cl, fs)
 
 	if len(ss) > 0 || len(fs) > 0 {
 		return true
@@ -876,12 +884,12 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 	pk.Created = time.Now().Unix()
 
 	if !cl.Net.Inline {
-		if pki, ok := cl.State.Inflight.Get(pk.PacketID); ok {
+		if pki, ok := cl.State.InboundInflight.Get(pk.PacketID); ok {
 			if pki.FixedHeader.Type == packets.Pubrec { // [MQTT-4.3.3-10]
 				ack := s.buildAck(pk.PacketID, packets.Pubrec, 0, pk.Properties, packets.ErrPacketIdentifierInUse)
 				return cl.WritePacket(ack)
 			}
-			if ok := cl.State.Inflight.Delete(pk.PacketID); ok { // [MQTT-4.3.2-5]
+			if ok := cl.State.InboundInflight.Delete(pk.PacketID); ok { // [MQTT-4.3.2-5]
 				atomic.AddInt64(&s.Info.Inflight, -1)
 			}
 		}
@@ -929,7 +937,7 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 		ack = s.buildAck(pk.PacketID, packets.Pubrec, 0, pk.Properties, packets.CodeSuccess) // [MQTT-3.3.4-1] [MQTT-4.3.3-8]
 	}
 
-	if ok := cl.State.Inflight.Set(ack); ok {
+	if ok := cl.State.InboundInflight.Set(ack); ok {
 		atomic.AddInt64(&s.Info.Inflight, 1)
 		s.hooks.OnQosPublish(cl, ack, ack.Created, 0)
 	}
@@ -940,7 +948,7 @@ func (s *Server) processPublish(cl *Client, pk packets.Packet) error {
 	}
 
 	if pk.FixedHeader.Qos == 1 {
-		if ok := cl.State.Inflight.Delete(ack.PacketID); ok {
+		if ok := cl.State.InboundInflight.Delete(ack.PacketID); ok {
 			atomic.AddInt64(&s.Info.Inflight, -1)
 		}
 		cl.State.Inflight.IncreaseReceiveQuota()
@@ -1274,12 +1282,12 @@ func (s *Server) processPubrec(cl *Client, pk packets.Packet) error {
 
 // processPubrel processes a Pubrel packet, denoting completion of a QOS 2 packet sent from the client.
 func (s *Server) processPubrel(cl *Client, pk packets.Packet) error {
-	if _, ok := cl.State.Inflight.Get(pk.PacketID); !ok { // [MQTT-4.3.3-7] [MQTT-4.3.3-13]
+	if _, ok := cl.State.InboundInflight.Get(pk.PacketID); !ok { // [MQTT-4.3.3-7] [MQTT-4.3.3-13]
 		return cl.WritePacket(s.buildAck(pk.PacketID, packets.Pubcomp, 0, pk.Properties, packets.ErrPacketIdentifierNotFound))
 	}
 
 	if pk.ReasonCode >= packets.ErrUnspecifiedError.Code || !pk.ReasonCodeValid() { // [MQTT-4.3.3-9]
-		if ok := cl.State.Inflight.Delete(pk.PacketID); ok {
+		if ok := cl.State.InboundInflight.Delete(pk.PacketID); ok {
 			atomic.AddInt64(&s.Info.Inflight, -1)
 			atomic.AddInt64(&s.Info.InflightDropped, 1)
 		}
@@ -1288,16 +1296,16 @@ func (s *Server) processPubrel(cl *Client, pk packets.Packet) error {
 	}
 
 	ack := s.buildAck(pk.PacketID, packets.Pubcomp, 0, pk.Properties, packets.CodeSuccess) // [MQTT-4.3.3-11]
-	cl.State.Inflight.Set(ack)
+	cl.State.InboundInflight.Set(ack)
 
 	err := cl.WritePacket(ack)
 	if err != nil {
 		return err
 	}
 
-	cl.State.Inflight.IncreaseReceiveQuota()             // +1 RECV QUOTA
-	cl.State.Inflight.IncreaseSendQuota()                // +1 SENT QUOTA
-	if ok := cl.State.Inflight.Delete(pk.PacketID); ok { // [MQTT-4.3.3-12]
+	cl.State.Inflight.IncreaseReceiveQuota()                    // +1 RECV QUOTA
+	cl.State.Inflight.IncreaseSendQuota()                       // +1 SENT QUOTA
+	if ok := cl.State.InboundInflight.Delete(pk.PacketID); ok { // [MQTT-4.3.3-12]
 		atomic.AddInt64(&s.Info.Inflight, -1)
 		s.hooks.OnQosComplete(cl, pk)
 	}
@@ -1318,49 +1326,60 @@ func (s *Server) processPubcomp(cl *Client, pk packets.Packet) error {
 	return nil
 }
 
+// subscribeFilterOutcome determines the reason code for a single SUBSCRIBE
+// filter and, if the filter is accepted, registers the subscription. packetIDCode
+// is the outcome of the SUBSCRIBE packet's own packet-identifier check, which
+// applies to every filter in the packet ([MQTT-3.8.4] does not allow per-filter
+// mixing here).
+func (s *Server) subscribeFilterOutcome(cl *Client, sub packets.Subscription, packetIDCode packets.Code) (code byte, existed bool, count int) {
+	switch {
+	case packetIDCode != packets.CodeSuccess:
+		code = packetIDCode.Code // NB 3.9.3 Non-normative 0x91
+	case !IsValidFilter(sub.Filter, false):
+		code = packets.ErrTopicFilterInvalid.Code
+	case sub.NoLocal && IsSharedFilter(sub.Filter):
+		code = packets.ErrProtocolViolationInvalidSharedNoLocal.Code // [MQTT-3.8.3-4]
+	case !s.hooks.OnACLCheck(cl, sub.Filter, false):
+		code = packets.ErrNotAuthorized.Code
+		if s.Options.Capabilities.Compatibilities.ObscureNotAuthorized {
+			code = packets.ErrUnspecifiedError.Code
+		}
+	default:
+		isNew, n := s.Topics.Subscribe(cl.ID, sub) // [MQTT-3.8.4-3]
+		if isNew {
+			atomic.AddInt64(&s.Info.Subscriptions, 1)
+		}
+		cl.State.Subscriptions.Add(sub.Filter, sub) // [MQTT-3.2.2-10]
+
+		if sub.Qos > s.Options.Capabilities.MaximumQos {
+			sub.Qos = s.Options.Capabilities.MaximumQos // [MQTT-3.2.2-9]
+		}
+
+		existed = !isNew
+		count = n
+		code = sub.Qos // [MQTT-3.9.3-1] [MQTT-3.8.4-7]
+	}
+
+	if code > packets.CodeGrantedQos2.Code && cl.Properties.ProtocolVersion < 5 { // MQTT3
+		code = packets.ErrUnspecifiedError.Code
+	}
+
+	return code, existed, count
+}
+
 // processSubscribe processes a Subscribe packet.
 func (s *Server) processSubscribe(cl *Client, pk packets.Packet) error {
 	pk = s.hooks.OnSubscribe(cl, pk)
-	code := packets.CodeSuccess
-	if _, ok := cl.State.Inflight.Get(pk.PacketID); ok {
-		code = packets.ErrPacketIdentifierInUse
+	packetIDCode := packets.CodeSuccess
+	if _, ok := cl.State.InboundInflight.Get(pk.PacketID); ok {
+		packetIDCode = packets.ErrPacketIdentifierInUse
 	}
 
 	filterExisted := make([]bool, len(pk.Filters))
 	reasonCodes := make([]byte, len(pk.Filters))
 	counts := make([]int, len(pk.Filters)) // An array of the number of subscribers for the same filter
 	for i, sub := range pk.Filters {
-		if code != packets.CodeSuccess {
-			reasonCodes[i] = code.Code // NB 3.9.3 Non-normative 0x91
-			continue
-		} else if !IsValidFilter(sub.Filter, false) {
-			reasonCodes[i] = packets.ErrTopicFilterInvalid.Code
-		} else if sub.NoLocal && IsSharedFilter(sub.Filter) {
-			reasonCodes[i] = packets.ErrProtocolViolationInvalidSharedNoLocal.Code // [MQTT-3.8.3-4]
-		} else if !s.hooks.OnACLCheck(cl, sub.Filter, false) {
-			reasonCodes[i] = packets.ErrNotAuthorized.Code
-			if s.Options.Capabilities.Compatibilities.ObscureNotAuthorized {
-				reasonCodes[i] = packets.ErrUnspecifiedError.Code
-			}
-		} else {
-			isNew, count := s.Topics.Subscribe(cl.ID, sub) // [MQTT-3.8.4-3]
-			if isNew {
-				atomic.AddInt64(&s.Info.Subscriptions, 1)
-			}
-			cl.State.Subscriptions.Add(sub.Filter, sub) // [MQTT-3.2.2-10]
-
-			if sub.Qos > s.Options.Capabilities.MaximumQos {
-				sub.Qos = s.Options.Capabilities.MaximumQos // [MQTT-3.2.2-9]
-			}
-
-			filterExisted[i] = !isNew
-			reasonCodes[i] = sub.Qos // [MQTT-3.9.3-1] [MQTT-3.8.4-7]
-			counts[i] = count
-		}
-
-		if reasonCodes[i] > packets.CodeGrantedQos2.Code && cl.Properties.ProtocolVersion < 5 { // MQTT3
-			reasonCodes[i] = packets.ErrUnspecifiedError.Code
-		}
+		reasonCodes[i], filterExisted[i], counts[i] = s.subscribeFilterOutcome(cl, sub, packetIDCode)
 	}
 
 	ack := packets.Packet{ // [MQTT-3.8.4-1] [MQTT-3.8.4-5]
@@ -1374,8 +1393,8 @@ func (s *Server) processSubscribe(cl *Client, pk packets.Packet) error {
 		},
 	}
 
-	if code.Code >= packets.ErrUnspecifiedError.Code {
-		ack.Properties.ReasonString = code.Reason
+	if packetIDCode.Code >= packets.ErrUnspecifiedError.Code {
+		ack.Properties.ReasonString = packetIDCode.Reason
 	}
 
 	s.hooks.OnSubscribed(cl, pk, reasonCodes, counts)
@@ -1398,7 +1417,7 @@ func (s *Server) processSubscribe(cl *Client, pk packets.Packet) error {
 // processUnsubscribe processes an unsubscribe packet.
 func (s *Server) processUnsubscribe(cl *Client, pk packets.Packet) error {
 	code := packets.CodeSuccess
-	if _, ok := cl.State.Inflight.Get(pk.PacketID); ok {
+	if _, ok := cl.State.InboundInflight.Get(pk.PacketID); ok {
 		code = packets.ErrPacketIdentifierInUse
 	}
 
@@ -1819,6 +1838,49 @@ func (s *Server) loadInflight(v []storage.Message) {
 			if ok := client.State.Inflight.Set(msg.ToPacket()); ok {
 				atomic.AddInt64(&s.Info.Inflight, 1)
 			}
+		}
+	}
+}
+
+// loadSubscriptionsForClient restores subscriptions for a single, known
+// client. Unlike loadSubscriptions (used for the bulk, all-clients restore at
+// startup, where every client in v has already been loaded into s.Clients via
+// loadClients), cl is passed directly rather than looked up via
+// s.Clients.Get(sub.Client) — see loadClientHistory's doc comment for why
+// that lookup would fail here.
+func (s *Server) loadSubscriptionsForClient(cl *Client, v []storage.Subscription) {
+	for _, sub := range v {
+		if sub.Client == InlineClientId {
+			continue
+		}
+
+		sb := packets.Subscription{
+			Filter:            sub.Filter,
+			RetainHandling:    sub.RetainHandling,
+			Qos:               sub.Qos,
+			RetainAsPublished: sub.RetainAsPublished,
+			NoLocal:           sub.NoLocal,
+			Identifier:        sub.Identifier,
+		}
+		if isNew, count := s.Topics.Subscribe(cl.ID, sb); isNew {
+			cl.State.Subscriptions.Add(sub.Filter, sb)
+			s.hooks.OnSubscribed(cl, packets.Packet{Filters: []packets.Subscription{sb}}, []byte{sub.Qos}, []int{count})
+		}
+	}
+}
+
+// loadInflightForClient restores inflight messages queued for a single, known
+// client. Unlike loadInflight (used for the bulk, all-clients restore at
+// startup), the recipient here is cl itself — the caller already knows it
+// from the StoredInflightMessagesByCid(cid) query that produced v — not
+// msg.Origin, which records who originally published the message and is
+// often a different client than the one the message is queued for. cl is
+// passed directly rather than looked up via s.Clients.Get(cid); see
+// loadClientHistory's doc comment for why that lookup would fail here.
+func (s *Server) loadInflightForClient(cl *Client, v []storage.Message) {
+	for _, msg := range v {
+		if ok := cl.State.Inflight.Set(msg.ToPacket()); ok {
+			atomic.AddInt64(&s.Info.Inflight, 1)
 		}
 	}
 }
