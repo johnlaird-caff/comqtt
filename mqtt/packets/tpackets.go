@@ -208,6 +208,7 @@ const (
 	TDisconnectMalProperties
 	TDisconnectMalReasonCode
 	TDisconnectZeroNonZeroExpiry
+	TDisconnectReasonCodeOnly
 	TAuth
 	TAuthMalReasonCode
 	TAuthMalProperties
@@ -3817,6 +3818,23 @@ var TPacketData = map[byte]TPacketCases{
 					Remaining: 2,
 				},
 				ReasonCode: ErrProtocolViolationZeroNonZeroExpiry.Code,
+			},
+		},
+		{
+			Case:  TDisconnectReasonCodeOnly,
+			Desc:  "reason code only mqtt5",
+			Group: "decode", // MQTT 5.0 §3.14.2.2.1: properties may be omitted when remaining length < 2
+			RawBytes: []byte{
+				Disconnect << 4, 1, // fixed header
+				ErrServerShuttingDown.Code,
+			},
+			Packet: &Packet{
+				ProtocolVersion: 5,
+				FixedHeader: FixedHeader{
+					Type:      Disconnect,
+					Remaining: 1,
+				},
+				ReasonCode: ErrServerShuttingDown.Code,
 			},
 		},
 		{
