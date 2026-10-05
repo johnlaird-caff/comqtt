@@ -565,7 +565,7 @@ func (pk *Packet) DisconnectEncode(buf *bytes.Buffer) error {
 
 // DisconnectDecode decodes a Disconnect packet.
 func (pk *Packet) DisconnectDecode(buf []byte) error {
-	if pk.ProtocolVersion == 5 && pk.FixedHeader.Remaining > 1 {
+	if pk.ProtocolVersion == 5 && pk.FixedHeader.Remaining > 0 { // MQTT 5.0 §3.14.2.1: reason code may be sent without properties
 		var err error
 		var offset int
 		pk.ReasonCode, offset, err = decodeByte(buf, offset)
