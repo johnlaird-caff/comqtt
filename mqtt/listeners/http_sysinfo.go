@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -27,6 +28,12 @@ type HTTPStats struct {
 	sysInfo  *system.Info // pointers to the server data
 	end      uint32       // ensure the close methods are only called once
 	handlers map[string]Handler
+	log      *slog.Logger
+	guard    *httpGuard // drops and temporarily bans clients sending non-http data
+
+	// BanDuration is how long a client sending non-http data (e.g. mqtt packets)
+	// is refused for. Defaults to DefaultHTTPBanDuration.
+	BanDuration time.Duration
 }
 
 type Handler = func(http.ResponseWriter, *http.Request)
@@ -36,10 +43,11 @@ func NewHTTP(id, address string, config *Config, handlers map[string]Handler) *H
 		config = new(Config)
 	}
 	return &HTTPStats{
-		id:       id,
-		address:  address,
-		config:   config,
-		handlers: handlers,
+		id:          id,
+		address:     address,
+		config:      config,
+		handlers:    handlers,
+		BanDuration: DefaultHTTPBanDuration,
 	}
 }
 
@@ -49,10 +57,11 @@ func NewHTTPStats(id, address string, config *Config, sysInfo *system.Info) *HTT
 		config = new(Config)
 	}
 	return &HTTPStats{
-		id:      id,
-		address: address,
-		sysInfo: sysInfo,
-		config:  config,
+		id:          id,
+		address:     address,
+		sysInfo:     sysInfo,
+		config:      config,
+		BanDuration: DefaultHTTPBanDuration,
 	}
 }
 
@@ -76,7 +85,9 @@ func (l *HTTPStats) Protocol() string {
 }
 
 // Init initializes the listener.
-func (l *HTTPStats) Init(_ *slog.Logger) error {
+func (l *HTTPStats) Init(log *slog.Logger) error {
+	l.log = log
+
 	mux := http.NewServeMux()
 	if len(l.handlers) > 0 {
 		for path, handler := range l.handlers {
@@ -102,10 +113,21 @@ func (l *HTTPStats) Init(_ *slog.Logger) error {
 
 // Serve starts listening for new connections and serving responses.
 func (l *HTTPStats) Serve(establish EstablishFn) {
+	ln, err := net.Listen("tcp", l.address)
+	if err != nil {
+		if l.log != nil {
+			l.log.Error("http listener failed to listen", "listener", l.id, "address", l.address, "error", err)
+		}
+		return
+	}
+
+	l.guard = newHTTPGuard(l.id, l.BanDuration, l.listen.TLSConfig != nil, l.log)
+	gl := &guardedListener{Listener: ln, guard: l.guard}
+
 	if l.listen.TLSConfig != nil {
-		_ = l.listen.ListenAndServeTLS("", "")
+		_ = l.listen.ServeTLS(gl, "", "")
 	} else {
-		_ = l.listen.ListenAndServe()
+		_ = l.listen.Serve(gl)
 	}
 }
 
