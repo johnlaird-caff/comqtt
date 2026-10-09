@@ -3,3 +3,14 @@ bolt.db
 raft.db
 .idea
 .vscode
+
+# Local Agent configs
+.claude/**/*.local.*
+
+# Team member specific commands
+.claude/**/ami-*.md
+.claude/docs/pr-guidance-template.md
+.claude/docs/qa-test-instructions-template.md
+
+# Local Taskfile (use Taskfile.dist.yml for shared)
+Taskfile.yml
