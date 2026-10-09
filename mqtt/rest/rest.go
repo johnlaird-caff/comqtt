@@ -112,7 +112,7 @@ func (s *Rest) kickClient(w http.ResponseWriter, r *http.Request) {
 func (s *Rest) blanchClient(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("id")
 	if slices.Contains(s.server.Blacklist, cid) {
-		slices.DeleteFunc(s.server.Blacklist, func(s string) bool { return s == cid })
+		s.server.Blacklist = slices.DeleteFunc(s.server.Blacklist, func(s string) bool { return s == cid })
 		Ok(w, cid)
 	}
 }

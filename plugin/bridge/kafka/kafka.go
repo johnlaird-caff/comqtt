@@ -49,7 +49,7 @@ type Message struct {
 	Remote          string   `json:"remote,omitempty"`          // the remote address of the client
 	Listener        string   `json:"listener,omitempty"`        // the listener the client connected on
 	Topics          []string `json:"topics,omitempty"`          // publish topic or subscribe/unsubscribe filters
-	reasonCodes     []byte   `json:"reasonCodes,omitempty"`     // subscribe/unsubscribe filters success(0) or failure(>0x80) code
+	ReasonCodes     []byte   `json:"reasonCodes,omitempty"`     // subscribe/unsubscribe filters success(0) or failure(>0x80) code
 	Payload         []byte   `json:"payload,omitempty"`         // publish payload
 	ProtocolVersion byte     `json:"protocolVersion,omitempty"` // mqtt protocol version of the client
 	Clean           bool     `json:"clean,omitempty"`           // if the client requested a clean start/session
@@ -349,7 +349,7 @@ func (b *Bridge) OnSubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes []
 		ClientID:    cl.ID,
 		Username:    string(cl.Properties.Username),
 		Topics:      filters,
-		reasonCodes: codes,
+		ReasonCodes: codes,
 		Timestamp:   timestamp,
 	}
 	data, err := msg.MarshalBinary()
@@ -383,7 +383,7 @@ func (b *Bridge) OnUnsubscribed(cl *mqtt.Client, pk packets.Packet, reasonCodes 
 		ClientID:    cl.ID,
 		Username:    string(cl.Properties.Username),
 		Topics:      filters,
-		reasonCodes: codes,
+		ReasonCodes: codes,
 		Timestamp:   timestamp,
 	}
 	data, err := msg.MarshalBinary()
