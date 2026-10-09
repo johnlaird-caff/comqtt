@@ -4,6 +4,12 @@ raft.db
 .idea
 .vscode
 
+# Local utility files
+.local/*
+
+# Logs
+**/*.log
+
 # Local Agent configs
 .claude/**/*.local.*
 
